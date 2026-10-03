@@ -1,0 +1,27 @@
+{
+  "name": "ai-nutrition-coach",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "build:shared": "npm run build -w @nutrition/shared",
+    "dev": "npm run build:shared && concurrently -k -n shared,api,worker,web -c gray,blue,magenta,green \"npm run dev -w @nutrition/shared\" \"npm run dev -w api\" \"npm run worker:dev -w api\" \"npm run dev -w web\"",
+    "build": "npm run build:shared && npm run build -w api && npm run build -w web",
+    "test": "npm run build:shared && npm test -w @nutrition/shared && npm test -w api",
+    "typecheck": "npm run build:shared && npm run typecheck -w api && npm run typecheck -w web",
+    "lint": "npm run lint -w web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "typescript": "~6.0.3"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
+  }
+}

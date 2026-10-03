@@ -1,0 +1,331 @@
+generator client {
+  provider      = "prisma-client-js"
+  // native for local dev, musl for the Alpine production image
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Sex {
+  MALE
+  FEMALE
+}
+
+enum ActivityLevel {
+  SEDENTARY
+  LIGHT
+  MODERATE
+  ACTIVE
+  VERY_ACTIVE
+}
+
+enum GoalType {
+  LOSE_FAT
+  MAINTAIN
+  GAIN_MUSCLE
+}
+
+enum DietPreference {
+  VEG
+  NON_VEG
+  EGGETARIAN
+  VEGAN
+}
+
+enum MealType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  SNACK
+}
+
+enum SampleType {
+  STEPS
+  ACTIVE_ENERGY
+  HEART_RATE
+  DISTANCE
+}
+
+/// Where a measurement came from. The resolver prefers sources in this order.
+enum HealthSource {
+  MANUAL
+  APP_TIMER
+  BLE_DEVICE
+  HEALTH_CONNECT
+  APPLE_HEALTH
+  GOOGLE_HEALTH
+  STRAVA
+}
+
+enum ReminderType {
+  BREAKFAST
+  LUNCH
+  DINNER
+  WEIGH_IN
+  WATER
+  PROTEIN
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  // Bumped on password change/reset so previously issued tokens stop working.
+  tokenVersion Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  profile             Profile?
+  meals               Meal[]
+  weightLogs          WeightLog[]
+  stepLogs            StepLog[]
+  waterLogs           WaterLog[]
+  exerciseLogs        ExerciseLog[]
+  healthSamples       HealthSample[]
+  dailyActivity       DailyActivity[]
+  customFoods         Food[]
+  favoriteFoods       FavoriteFood[]
+  reminders           ReminderSetting[]
+  pushSubscriptions   PushSubscription[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model Profile {
+  id     String @id @default(cuid())
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String @unique
+
+  sex               Sex
+  age               Int
+  heightCm          Float
+  startWeightKg     Float
+  targetWeightKg    Float?
+  activityLevel     ActivityLevel  @default(MODERATE)
+  dietPreference    DietPreference @default(VEG)
+  goalType          GoalType       @default(MAINTAIN)
+  stepTarget        Int            @default(8000)
+  waterTargetMl     Int            @default(2500)
+  /// Calories from movement per day, on top of the resting burn.
+  activeKcalTarget  Int            @default(400)
+  /// Heart points for the whole week (the WHO guideline is 150).
+  heartPointsTarget Int            @default(150)
+  workoutDaysTarget Int            @default(4)
+  timezone          String         @default("Asia/Kolkata")
+
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}
+
+model Food {
+  id              String         @id @default(cuid())
+  name            String
+  category        String
+  dietType        DietPreference @default(VEG)
+  servingLabel    String
+  servingGrams    Float
+  caloriesPer100g Float
+  proteinPer100g  Float
+  carbsPer100g    Float
+  fatPer100g      Float
+  fiberPer100g    Float          @default(0)
+  // Null for the shared catalog; set for foods a user created (visible only to them).
+  createdBy       User?          @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdById     String?
+  // Custom foods already used in a log are archived instead of deleted to keep history intact.
+  archivedAt      DateTime?
+  createdAt       DateTime       @default(now())
+
+  mealItems MealItem[]
+  favorites FavoriteFood[]
+
+  @@index([createdById])
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Food_name_trgm_idx")
+}
+
+model FavoriteFood {
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  food      Food     @relation(fields: [foodId], references: [id], onDelete: Cascade)
+  foodId    String
+  createdAt DateTime @default(now())
+
+  @@id([userId, foodId])
+}
+
+model Meal {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  type      MealType
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+
+  items MealItem[]
+
+  @@unique([userId, date, type])
+}
+
+model MealItem {
+  id        String   @id @default(cuid())
+  meal      Meal     @relation(fields: [mealId], references: [id], onDelete: Cascade)
+  mealId    String
+  // NoAction (checked at end of statement) so account deletion can cascade foods and meals together.
+  food      Food     @relation(fields: [foodId], references: [id], onDelete: NoAction)
+  foodId    String
+  quantityG Float
+  // Snapshot at log time so edits to the Food catalog don't rewrite history
+  calories  Float
+  proteinG  Float
+  carbsG    Float
+  fatG      Float
+  createdAt DateTime @default(now())
+
+  @@index([mealId])
+  @@index([foodId])
+}
+
+model WeightLog {
+  id       String   @id @default(cuid())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  date     DateTime @db.Date
+  weightKg Float
+  notes    String?
+
+  @@unique([userId, date])
+}
+
+model StepLog {
+  id     String   @id @default(cuid())
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+  date   DateTime @db.Date
+  steps  Int
+
+  @@unique([userId, date])
+}
+
+model WaterLog {
+  id       String   @id @default(cuid())
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  date     DateTime @db.Date
+  amountMl Int
+
+  @@unique([userId, date])
+}
+
+model Activity {
+  id             String @id
+  name           String
+  category       String
+  // Metabolic equivalent (Compendium of Physical Activities)
+  met            Float
+  /// Set for activities done on foot, so their steps aren't counted a second time.
+  stepsPerMinute Int?
+
+  exerciseLogs ExerciseLog[]
+}
+
+model ExerciseLog {
+  id             String   @id @default(cuid())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId         String
+  activity       Activity @relation(fields: [activityId], references: [id])
+  activityId     String
+  date           DateTime @db.Date
+  durationMin    Int
+  // Snapshot at log time so later weight changes don't rewrite history
+  weightKgUsed   Float
+  caloriesBurned Float
+  heartPoints    Int      @default(0)
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId, date])
+}
+
+/// Append-only record of everything a device or connector reports. Nothing is ever edited here:
+/// re-syncing the same record is a no-op thanks to the (source, externalId) key.
+model HealthSample {
+  id         String       @id @default(cuid())
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  type       SampleType
+  source     HealthSource
+  startAt    DateTime     @db.Timestamptz(3)
+  endAt      DateTime     @db.Timestamptz(3)
+  value      Float
+  /// The provider's own id for the record, when it has one.
+  externalId String?
+  deviceName String?
+  createdAt  DateTime     @default(now())
+
+  @@unique([userId, source, externalId])
+  @@index([userId, type, startAt])
+}
+
+/// Cached result of reconciling every source for one day. Always derivable from the logs and
+/// samples above, so anything that writes those deletes the affected rows.
+model DailyActivity {
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  date          DateTime     @db.Date
+  steps         Int
+  /// Steps left after removing those a logged walk or run already accounts for.
+  countedSteps  Int
+  stepSource    HealthSource
+  exerciseMin   Int
+  exerciseCount Int
+  exerciseKcal  Int
+  stepKcal      Int
+  deviceKcal    Int
+  activeKcal    Int
+  heartPoints   Int
+  computedAt    DateTime     @default(now())
+
+  @@id([userId, date])
+}
+
+model ReminderSetting {
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId     String
+  type       ReminderType
+  enabled    Boolean      @default(true)
+  // Local wall-clock time "HH:mm" in the user's profile timezone
+  time       String
+  // Local date the reminder last fired; claims prevent double sends across workers.
+  lastSentOn DateTime?    @db.Date
+
+  @@id([userId, type])
+  @@index([enabled])
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  // SHA-256 of the emailed token; the raw token is never stored.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}

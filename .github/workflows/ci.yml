@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nutrition
+          POSTGRES_PASSWORD: nutrition
+          POSTGRES_DB: nutrition_coach
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nutrition" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://nutrition:nutrition@localhost:5432/nutrition_coach?schema=public
+      JWT_SECRET: ci-secret-ci-secret-ci-secret-ci-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx --prefix api prisma generate --schema api/prisma/schema.prisma
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f api/Dockerfile -t nutricoach-api .
+      - run: docker build -f web/Dockerfile --build-arg API_URL=http://api:4000 -t nutricoach-web .

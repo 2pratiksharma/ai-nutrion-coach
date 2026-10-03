@@ -1,0 +1,77 @@
+# Local development:   docker compose up -d            (Postgres only)
+# Full stack:          docker compose --profile app up -d --build   (web on http://localhost:8080)
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nutrition
+      POSTGRES_PASSWORD: nutrition
+      POSTGRES_DB: nutrition_coach
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nutrition -d nutrition_coach"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    profiles: ["app"]
+    build: { context: ., dockerfile: api/Dockerfile, target: build }
+    working_dir: /app/api
+    env_file: api/.env
+    environment: &app-db
+      DATABASE_URL: postgresql://nutrition:nutrition@db:5432/nutrition_coach?schema=public
+    command: sh -c "npx prisma migrate deploy && npx prisma db seed"
+    depends_on:
+      db: { condition: service_healthy }
+
+  api:
+    profiles: ["app"]
+    build: { context: ., dockerfile: api/Dockerfile }
+    image: nutricoach-api
+    restart: unless-stopped
+    env_file: api/.env
+    environment:
+      <<: *app-db
+      NODE_ENV: production
+      WEB_ORIGIN: http://localhost:8080
+      APP_URL: http://localhost:8080
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    profiles: ["app"]
+    image: nutricoach-api
+    restart: unless-stopped
+    command: ["node", "dist/worker.js"]
+    # The image's healthcheck probes the HTTP API, which the worker doesn't serve.
+    healthcheck:
+      disable: true
+    env_file: api/.env
+    environment:
+      <<: *app-db
+      NODE_ENV: production
+      APP_URL: http://localhost:8080
+    depends_on:
+      api: { condition: service_started }
+
+  web:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      args: { API_URL: "http://api:4000" }
+    restart: unless-stopped
+    environment:
+      API_URL: http://api:4000
+    ports:
+      - "8080:3000"
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
